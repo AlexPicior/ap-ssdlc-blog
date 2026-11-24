@@ -1,0 +1,26 @@
+name: Change request
+description: Ask Kiro to change something on the blog (not a new post).
+title: "Change: "
+labels: ["kiro", "change"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this to fix or change something that already exists: a typo, a
+        broken link, wording, layout. Kiro opens a pull request with the
+        change.
+  - type: textarea
+    id: what
+    attributes:
+      label: What to change
+      description: Be specific. Name the post or page if you can.
+      placeholder: e.g. In the "Hello" post, the second paragraph should say ...
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: Optional. Any context that helps.
+    validations:
+      required: false

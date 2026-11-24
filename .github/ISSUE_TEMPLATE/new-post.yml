@@ -1,0 +1,56 @@
+name: New post
+description: Ask Kiro to draft and publish a new blog post.
+title: "Post: "
+labels: ["kiro", "post"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the post you want. Kiro drafts it in Alex's voice and opens
+        a pull request. Once the checks pass, it merges and goes live on its
+        own.
+  - type: input
+    id: topic
+    attributes:
+      label: Topic
+      description: What is the post about?
+      placeholder: e.g. How I warm up before a heavy squat session
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Key points or notes
+      description: The main points to cover. Bullet points are fine.
+      placeholder: |
+        - why warming up matters
+        - the specific movements I use
+        - how long it takes
+    validations:
+      required: true
+  - type: dropdown
+    id: length
+    attributes:
+      label: Approximate length
+      options:
+        - "short (~300 words)"
+        - "medium (~800 words)"
+        - "long (~1500 words)"
+      default: 1
+    validations:
+      required: true
+  - type: input
+    id: tags
+    attributes:
+      label: Tags
+      description: Optional. Lowercase, comma-separated. Kiro reuses existing tags where they fit.
+      placeholder: e.g. training, warmup
+    validations:
+      required: false
+  - type: textarea
+    id: avoid
+    attributes:
+      label: Anything to avoid
+      description: Optional. Topics, claims or phrasing to stay away from.
+    validations:
+      required: false
