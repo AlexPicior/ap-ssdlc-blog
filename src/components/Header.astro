@@ -1,0 +1,12 @@
+---
+import { href } from "../lib/url";
+---
+
+<header class="site-header">
+  <a class="site-title" href={href()}>Alex Picior</a>
+  <nav aria-label="Primary">
+    <a href={href()}>Posts</a>
+    <a href={href("tags")}>Tags</a>
+    <a href={href("rss.xml")}>RSS</a>
+  </nav>
+</header>

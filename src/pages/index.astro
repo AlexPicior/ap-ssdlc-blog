@@ -1,0 +1,31 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import FormattedDate from "../components/FormattedDate.astro";
+import { getPublishedPosts, postSlug } from "../lib/posts";
+import { href } from "../lib/url";
+
+const posts = await getPublishedPosts();
+---
+
+<BaseLayout
+  title="Alex Picior"
+  description="A personal blog about the gym, training and fitness, by Alex Picior. New posts start life as GitHub issues."
+>
+  <h1>Posts</h1>
+  {posts.length === 0 && <p>No posts yet.</p>}
+  <ul class="post-list">
+    {
+      posts.map((post) => (
+        <li>
+          <a class="post-link" href={href("posts", postSlug(post))}>
+            {post.data.title}
+          </a>
+          <p class="post-meta">
+            <FormattedDate date={post.data.pubDate} />
+          </p>
+          <p class="post-desc">{post.data.description}</p>
+        </li>
+      ))
+    }
+  </ul>
+</BaseLayout>

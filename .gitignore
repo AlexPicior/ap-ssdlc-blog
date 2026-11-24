@@ -1,0 +1,13 @@
+# build output
+dist/
+# generated astro types and cache
+.astro/
+# linkcheck working copy
+tmp/
+# dependencies
+node_modules/
+# logs
+npm-debug.log*
+# os / editor
+.DS_Store
+Thumbs.db

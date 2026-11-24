@@ -1,0 +1,13 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { href } from "../lib/url";
+---
+
+<BaseLayout
+  title="Page not found"
+  description="That page doesn't exist. Head back to the list of posts on Alex Picior's blog."
+>
+  <h1>Page not found</h1>
+  <p>That page doesn't exist.</p>
+  <p><a href={href()}>Back to posts</a></p>
+</BaseLayout>
