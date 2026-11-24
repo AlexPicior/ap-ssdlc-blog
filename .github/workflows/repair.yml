@@ -1,0 +1,160 @@
+name: Repair
+
+on:
+  workflow_run:
+    workflows: ["CI", "Deploy", "Health"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      simulate:
+        description: "Run the failure path against the latest CI run on main (adds a 'test' incident)."
+        type: boolean
+        default: false
+
+# issues: write to manage the incident issue; actions: read to read run logs.
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+concurrency:
+  group: repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    # For workflow_run, only act on runs against main. (workflow_dispatch has
+    # no head_branch, so allow it through.)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.head_branch == 'main'
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Repair logic
+        run: |
+          set -euo pipefail
+
+          EVENT="${{ github.event_name }}"
+          SIMULATE="${{ github.event.inputs.simulate }}"
+
+          # --- Resolve the run we're reacting to and whether it failed. ---
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$SIMULATE" = "true" ]; then
+            MODE="failure"
+            TEST="true"
+            WF_NAME="CI"
+            RUN_ID="$(gh run list --repo "$REPO" --workflow CI --branch main \
+              --limit 1 --json databaseId --jq '.[0].databaseId')"
+            RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+            HEAD_SHA="$(gh run view "$RUN_ID" --repo "$REPO" --json headSha --jq '.headSha')"
+          elif [ "$EVENT" = "workflow_run" ]; then
+            TEST="false"
+            WF_NAME="${{ github.event.workflow_run.name }}"
+            RUN_ID="${{ github.event.workflow_run.id }}"
+            RUN_URL="${{ github.event.workflow_run.html_url }}"
+            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+            if [ "$CONCLUSION" = "success" ]; then
+              MODE="success"
+            else
+              MODE="failure"
+            fi
+          else
+            echo "workflow_dispatch without simulate: nothing to do."
+            exit 0
+          fi
+
+          echo "mode=$MODE workflow=$WF_NAME run=$RUN_URL test=$TEST"
+
+          INCIDENT_NUM="$(gh issue list --repo "$REPO" --state open \
+            --label incident --json number --jq '.[0].number' || true)"
+
+          # --- Success: close an open incident, if any. ---
+          if [ "$MODE" = "success" ]; then
+            if [ -n "$INCIDENT_NUM" ]; then
+              gh issue comment "$INCIDENT_NUM" --repo "$REPO" --body \
+                "\`main\` is green again: $RUN_URL. Closing this incident."
+              gh issue close "$INCIDENT_NUM" --repo "$REPO"
+            fi
+            exit 0
+          fi
+
+          # --- Failure path. ---
+
+          # 1. Collect details (last 200 lines of the failing log).
+          LOGS="$(gh run view "$RUN_ID" --repo "$REPO" --log-failed 2>/dev/null \
+            | tail -n 200 || echo '(could not fetch logs)')"
+
+          DETAILS="$(cat <<EOF
+          **Workflow:** $WF_NAME
+          **Run:** $RUN_URL
+          **Head SHA:** \`$HEAD_SHA\`
+
+          <details><summary>Last 200 lines of failing log</summary>
+
+          \`\`\`
+          $LOGS
+          \`\`\`
+
+          </details>
+          EOF
+          )"
+
+          # 2. Find or create the incident issue.
+          if [ -z "$INCIDENT_NUM" ]; then
+            BODY="$(cat <<EOF
+          $DETAILS
+
+          ---
+          Read \`.kiro/steering/repair.md\` first. The details and logs are in this issue. Open one PR with the fix and reference this issue.
+          EOF
+          )"
+            LABELS="incident"
+            if [ "$TEST" = "true" ]; then LABELS="incident,test"; fi
+            ISSUE_URL="$(gh issue create --repo "$REPO" \
+              --title "Incident: $WF_NAME failing on main" \
+              --label "$LABELS" --body "$BODY")"
+            INCIDENT_NUM="$(printf '%s' "$ISSUE_URL" | grep -oE '[0-9]+$')"
+            echo "Created incident #$INCIDENT_NUM ($ISSUE_URL)"
+          else
+            gh issue comment "$INCIDENT_NUM" --repo "$REPO" --body "$DETAILS"
+            if [ "$TEST" = "true" ]; then
+              gh issue edit "$INCIDENT_NUM" --repo "$REPO" --add-label "test" || true
+            fi
+            echo "Updated incident #$INCIDENT_NUM"
+          fi
+
+          # 3. Attempt counting and the two-strikes limit.
+          HAS_NEEDS_ALEX="$(gh issue view "$INCIDENT_NUM" --repo "$REPO" \
+            --json labels --jq '.labels[].name' | grep -Fx 'needs-alex' || true)"
+          if [ -n "$HAS_NEEDS_ALEX" ]; then
+            echo "Incident already has needs-alex. Stopping."
+            exit 0
+          fi
+
+          ATTEMPTS="$(gh issue view "$INCIDENT_NUM" --repo "$REPO" \
+            --json comments --jq '[.comments[].body | select(startswith("Repair attempt"))] | length')"
+          if [ "$ATTEMPTS" -ge 2 ]; then
+            gh issue edit "$INCIDENT_NUM" --repo "$REPO" --add-label "needs-alex"
+            gh issue comment "$INCIDENT_NUM" --repo "$REPO" --body \
+              "Automatic repair failed twice. Alex, please take a look."
+            echo "Two attempts reached; added needs-alex."
+            exit 0
+          fi
+          N=$((ATTEMPTS + 1))
+          gh issue comment "$INCIDENT_NUM" --repo "$REPO" --body "Repair attempt $N"
+
+          # 4. Hand to Kiro. No API key on this plan, so a workflow can't start
+          #    Kiro; only Alex adding the `kiro` label (or commenting /kiro)
+          #    does. A label added by github-actions does not count.
+          HAS_KIRO="$(gh issue view "$INCIDENT_NUM" --repo "$REPO" \
+            --json labels --jq '.labels[].name' | grep -Fx 'kiro' || true)"
+          if [ -z "$HAS_KIRO" ]; then
+            gh issue comment "$INCIDENT_NUM" --repo "$REPO" --body \
+              "Alex: add the \`kiro\` label to this issue to start an automatic repair. If you don't, the weekly maintenance task will pick it up on Monday."
+          else
+            echo "Incident already labeled kiro; the running task sees new comments."
+          fi

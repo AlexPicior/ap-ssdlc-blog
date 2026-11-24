@@ -1,0 +1,78 @@
+name: Auto-merge
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - labeled
+      - unlabeled
+
+# No GITHUB_TOKEN write access needed: all mutating calls use AUTOMATION_PAT.
+# Merges done with GITHUB_TOKEN don't fire the `push` event, so Deploy would
+# never run. AUTOMATION_PAT is a real user token and does fire it.
+permissions:
+  contents: read
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # Never auto-merge PRs from forks. The repo is public, so anyone can open
+    # one. Only act when the PR's head repo is this repo.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Decide and act
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMATION_PAT }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "AUTOMATION_PAT is not set; cannot manage auto-merge." >&2
+            exit 1
+          fi
+
+          # Draft PR: do nothing.
+          if [ "$IS_DRAFT" = "true" ]; then
+            echo "PR #$PR is a draft. Nothing to do."
+            exit 0
+          fi
+
+          has_label() {
+            echo "$LABELS" | jq -e --arg l "$1" 'index($l) != null' >/dev/null
+          }
+
+          # Hold label: make sure auto-merge is off, then stop.
+          if has_label "hold"; then
+            echo "PR #$PR has the 'hold' label. Disabling auto-merge."
+            gh pr merge "$PR" --repo "$REPO" --disable-auto || true
+            exit 0
+          fi
+
+          # Guardrail files: a human must merge these.
+          FILES="$(gh pr view "$PR" --repo "$REPO" --json files --jq '.files[].path')"
+          if echo "$FILES" | grep -Eq '^(\.github/|\.kiro/)'; then
+            echo "PR #$PR touches .github/ or .kiro/. Flagging for Alex."
+            gh pr edit "$PR" --repo "$REPO" --add-label "needs-alex"
+            # Comment only once.
+            MARKER="<!-- needs-alex-auto-merge -->"
+            EXISTING="$(gh pr view "$PR" --repo "$REPO" --json comments \
+              --jq '.comments[].body' | grep -F "$MARKER" || true)"
+            if [ -z "$EXISTING" ]; then
+              gh pr comment "$PR" --repo "$REPO" --body \
+                "$MARKER
+            This PR changes files under \`.github/\` or \`.kiro/\`, so it won't auto-merge. Alex needs to review and merge it by hand."
+            fi
+            exit 0
+          fi
+
+          # Normal content PR: let GitHub merge it once `build` passes.
+          echo "Enabling auto-merge (squash) for PR #$PR."
+          gh pr merge "$PR" --repo "$REPO" --auto --squash

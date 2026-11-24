@@ -1,0 +1,127 @@
+name: Health
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+# issues: write is for managing the single broken-links issue (soft check).
+permissions:
+  contents: read
+  issues: write
+
+env:
+  SITE: https://alexpicior.github.io/ap-ssdlc-blog
+  LYCHEE_VERSION: v0.24.2
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7
+
+      # --- Hard checks: fail the job if any fails. ---
+
+      - name: Key URLs return 200
+        run: |
+          set -euo pipefail
+          # Resolve the newest post URL from the live sitemap, then check the
+          # fixed URLs plus that post.
+          urls=(
+            "${SITE}/"
+            "${SITE}/rss.xml"
+            "${SITE}/sitemap-index.xml"
+          )
+
+          # Newest post = last /posts/.../ entry in the sitemap. Posts are
+          # dated in the filename and listed newest first on the site, but the
+          # sitemap order isn't guaranteed, so pick by the highest pubDate is
+          # overkill here; any published post URL returning 200 proves routing
+          # works. We take the first posts URL we find.
+          sitemap="$(curl -fsSL "${SITE}/sitemap-0.xml" || true)"
+          post_url="$(printf '%s' "$sitemap" \
+            | grep -oE "${SITE}/posts/[^<]+" | head -n1 || true)"
+          if [ -n "$post_url" ]; then
+            urls+=("$post_url")
+          else
+            echo "No post URL found in sitemap; skipping post URL check."
+          fi
+
+          fail=0
+          for u in "${urls[@]}"; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "$u")"
+            echo "$code  $u"
+            if [ "$code" != "200" ]; then
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Install lychee
+        run: |
+          set -euo pipefail
+          curl -sfLO "https://github.com/lycheeverse/lychee/releases/download/lychee-${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xzf lychee-x86_64-unknown-linux-gnu.tar.gz
+          BIN="$(find . -maxdepth 2 -type f -name lychee | head -n1)"
+          sudo install -m 0755 "$BIN" /usr/local/bin/lychee
+          rm -rf lychee-x86_64-unknown-linux-gnu.tar.gz "$(dirname "$BIN")"/lychee* 2>/dev/null || true
+          lychee --version
+
+      - name: Internal links resolve on the live site
+        run: |
+          set -euo pipefail
+          # Crawl the live site, checking internal links only.
+          lychee --no-progress --include-fragments \
+            --scheme https \
+            --exclude-all-private \
+            --include "${SITE}" \
+            --exclude "^(?!${SITE}).*$" \
+            "${SITE}/"
+
+      # --- Soft check: external links never fail the job. ---
+
+      - name: Check external links (soft)
+        id: external
+        run: |
+          set -uo pipefail
+          # Check only links that leave the site. Write a report; don't fail.
+          set +e
+          lychee --no-progress \
+            --exclude "^${SITE}" \
+            --format markdown \
+            --output lychee-external.md \
+            "${SITE}/"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          set -e
+          echo "---- report ----"
+          cat lychee-external.md || true
+
+      - name: Open, update or close the broken-links issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BROKEN: ${{ steps.external.outputs.exit_code != '0' }}
+        run: |
+          set -euo pipefail
+          TITLE="Broken external links"
+          EXISTING="$(gh issue list --repo "$REPO" --state open \
+            --label broken-links --json number --jq '.[0].number' || true)"
+
+          if [ "$BROKEN" = "true" ]; then
+            BODY="$(printf 'The daily Health check found broken external links.\n\n')"
+            BODY="${BODY}$(cat lychee-external.md 2>/dev/null || echo 'See the workflow run for details.')"
+            if [ -n "$EXISTING" ]; then
+              gh issue comment "$EXISTING" --repo "$REPO" --body "$BODY"
+            else
+              gh issue create --repo "$REPO" --title "$TITLE" \
+                --label broken-links --body "$BODY"
+            fi
+          else
+            if [ -n "$EXISTING" ]; then
+              gh issue comment "$EXISTING" --repo "$REPO" \
+                --body "No broken external links in the latest Health check. Closing."
+              gh issue close "$EXISTING" --repo "$REPO"
+            fi
+            echo "No broken external links."
+          fi
