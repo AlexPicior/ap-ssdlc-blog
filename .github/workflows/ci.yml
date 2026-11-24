@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: CI only needs to read the repo.
+permissions:
+  contents: read
+
+env:
+  LYCHEE_VERSION: v0.24.2
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7
+
+      - name: Set up Node from .nvmrc
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      # scripts/linkcheck.mjs shells out to the lychee binary, so put a
+      # pinned lychee on PATH first. One link-check implementation runs the
+      # same way locally and in CI. lychee is distributed as a binary, not
+      # an npm package (https://github.com/lycheeverse/lychee).
+      - name: Install lychee
+        run: |
+          curl -sfLO "https://github.com/lycheeverse/lychee/releases/download/lychee-${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xzf lychee-x86_64-unknown-linux-gnu.tar.gz
+          sudo install -m 0755 lychee /usr/local/bin/lychee
+          rm -f lychee lychee-x86_64-unknown-linux-gnu.tar.gz
+          lychee --version
+
+      # Internal link check only (--offline, inside the script). Any broken
+      # internal link fails the job. External links are not checked here;
+      # the Health workflow handles those as a soft check.
+      - name: Internal link check
+        run: npm run linkcheck

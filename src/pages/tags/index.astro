@@ -1,0 +1,24 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { getAllTags } from "../../lib/posts";
+import { href } from "../../lib/url";
+
+const tags = await getAllTags();
+---
+
+<BaseLayout
+  title="Tags"
+  description="Browse posts by tag on Alex Picior's blog about the gym, training and fitness."
+>
+  <h1>Tags</h1>
+  {tags.length === 0 && <p>No tags yet.</p>}
+  <ul class="tag-list">
+    {
+      tags.map((tag) => (
+        <li>
+          <a href={href("tags", tag)}>{tag}</a>
+        </li>
+      ))
+    }
+  </ul>
+</BaseLayout>

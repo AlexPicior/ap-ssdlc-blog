@@ -1,0 +1,25 @@
+{
+  "name": "ap-ssdlc-blog",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=24.22.3"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "linkcheck": "node scripts/linkcheck.mjs"
+  },
+  "dependencies": {
+    "@astrojs/rss": "4.0.19",
+    "@astrojs/sitemap": "3.7.6",
+    "astro": "7.4.13"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.12",
+    "typescript": "5.9.3"
+  }
+}

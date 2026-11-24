@@ -1,0 +1,44 @@
+---
+import type { GetStaticPaths } from "astro";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import FormattedDate from "../../components/FormattedDate.astro";
+import { getPublishedPosts, getAllTags, postSlug } from "../../lib/posts";
+import { href } from "../../lib/url";
+
+export const getStaticPaths = (async () => {
+  const tags = await getAllTags();
+  const posts = await getPublishedPosts();
+  return tags.map((tag) => ({
+    params: { tag },
+    props: {
+      tag,
+      posts: posts.filter((post) => post.data.tags.includes(tag)),
+    },
+  }));
+}) satisfies GetStaticPaths;
+
+const { tag, posts } = Astro.props;
+---
+
+<BaseLayout
+  title={`Posts tagged "${tag}"`}
+  description={`All posts tagged "${tag}" on Alex Picior's blog about the gym, training and fitness.`}
+>
+  <h1>Posts tagged "{tag}"</h1>
+  <p><a href={href("tags")}>All tags</a></p>
+  <ul class="post-list">
+    {
+      posts.map((post) => (
+        <li>
+          <a class="post-link" href={href("posts", postSlug(post))}>
+            {post.data.title}
+          </a>
+          <p class="post-meta">
+            <FormattedDate date={post.data.pubDate} />
+          </p>
+          <p class="post-desc">{post.data.description}</p>
+        </li>
+      ))
+    }
+  </ul>
+</BaseLayout>
