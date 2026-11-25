@@ -72,11 +72,12 @@ jobs:
         run: |
           set -euo pipefail
           # Crawl the live site, checking internal links only.
+          # --include keeps only URLs under the site prefix and takes
+          # preference over excludes, so external links are dropped.
           lychee --no-progress --include-fragments \
             --scheme https \
             --exclude-all-private \
-            --include "${SITE}" \
-            --exclude "^(?!${SITE}).*$" \
+            --include "^${SITE}" \
             "${SITE}/"
 
       # --- Soft check: external links never fail the job. ---
