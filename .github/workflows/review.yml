@@ -1,0 +1,108 @@
+name: Agent review
+
+# Gate every content PR on a fresh-context agent review. The reviewing agent
+# (a Kiro task started in a new chat) reads the diff and the steering files,
+# then posts a verdict comment. This workflow turns that verdict into the
+# `agent-review` commit status, which is a required check on main.
+#
+# No API key on this plan, so a workflow can't start the reviewer itself;
+# Alex launches it (one fresh chat). The flow is deliberately the same shape
+# as repair: automation sets up and records; a labeled/triggered Kiro task
+# does the thinking.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  # When a PR opens or updates, mark the review check pending and leave
+  # instructions once.
+  request-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set agent-review pending and request a review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          # Never gate/trust forks here; auto-merge already refuses them.
+          if [ "$HEAD_REPO" != "$REPO" ]; then
+            echo "Fork PR; skipping review gate setup."
+            exit 0
+          fi
+
+          gh api --method POST "repos/$REPO/statuses/$SHA" \
+            -f state=pending \
+            -f context=agent-review \
+            -f description="Waiting for a fresh-context agent review" >/dev/null
+
+          MARKER="<!-- agent-review-request -->"
+          EXISTING="$(gh pr view "$PR" --repo "$REPO" --json comments \
+            --jq '.comments[].body' | grep -F "$MARKER" || true)"
+          if [ -z "$EXISTING" ]; then
+            gh pr comment "$PR" --repo "$REPO" --body \
+              "$MARKER
+          A fresh-context agent review is required before this PR can merge.
+          Start a new Kiro chat and run:
+          \`Review PR #$PR in $REPO. Read .kiro/steering/ first. Do not edit the PR.\`
+          The reviewer posts a verdict containing \`REVIEW: APPROVED\` or \`REVIEW: CHANGES REQUESTED\`."
+          fi
+
+  # When the reviewer comments an approval, flip the check to success.
+  record-verdict:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, 'REVIEW:')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Translate the verdict into the agent-review status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.comment.body }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+
+          # Only the repo owner's review tasks can approve. The reviewing Kiro
+          # task acts as the authenticated user (AUTOMATION_PAT owner); a drive-by
+          # comment from anyone else must not flip the gate.
+          OWNER="$(gh repo view "$REPO" --json owner --jq '.owner.login')"
+          if [ "$COMMENTER" != "$OWNER" ]; then
+            echo "Comment from $COMMENTER is not the owner; ignoring."
+            exit 0
+          fi
+
+          SHA="$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq '.headRefOid')"
+
+          if printf '%s' "$BODY" | grep -q 'REVIEW: APPROVED'; then
+            STATE=success
+            DESC="Fresh-context agent review approved"
+          elif printf '%s' "$BODY" | grep -q 'REVIEW: CHANGES REQUESTED'; then
+            STATE=failure
+            DESC="Reviewer requested changes"
+          else
+            echo "No recognized verdict; leaving status unchanged."
+            exit 0
+          fi
+
+          gh api --method POST "repos/$REPO/statuses/$SHA" \
+            -f state="$STATE" \
+            -f context=agent-review \
+            -f description="$DESC" >/dev/null
+          echo "agent-review set to $STATE for PR #$PR ($SHA)."
