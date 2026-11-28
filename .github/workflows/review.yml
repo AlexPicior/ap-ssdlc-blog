@@ -18,6 +18,9 @@ on:
 
 permissions:
   contents: read
+  statuses: write
+  pull-requests: write
+  issues: write
 
 jobs:
   # When a PR opens or updates, mark the review check pending and leave
@@ -28,7 +31,7 @@ jobs:
     steps:
       - name: Set agent-review pending and request a review
         env:
-          GH_TOKEN: ${{ secrets.AUTOMATION_PAT }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.event.pull_request.head.sha }}
           PR: ${{ github.event.pull_request.number }}
@@ -68,7 +71,7 @@ jobs:
     steps:
       - name: Translate the verdict into the agent-review status
         env:
-          GH_TOKEN: ${{ secrets.AUTOMATION_PAT }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.issue.number }}
           BODY: ${{ github.event.comment.body }}
